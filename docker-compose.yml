@@ -1,0 +1,48 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+    container_name: shokugen_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+    container_name: shokugen_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://shokugen:shokugen@db:5432/shokugen
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    container_name: shokugen_db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=shokugen
+      - POSTGRES_USER=shokugen
+      - POSTGRES_PASSWORD=shokugen
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shokugen -d shokugen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:

@@ -1,0 +1,37 @@
+---
+alwaysApply: true
+---
+
+---
+description: High level understanding of the food decision support map application
+alwaysApply: true
+---
+
+# Project Overview
+
+This project is a decision-support map web application that reduces choice overload when selecting restaurants.
+
+Core concept:
+Users should be able to decide where to eat within 5 seconds.
+
+Primary goals:
+- Reduce search friction
+- Remove noisy search results
+- Present ONE strong recommendation instead of many options
+
+Target users:
+- Busy workers
+- Students
+- Travelers
+- Indecisive users
+
+Core features:
+- Genre-filtered map display
+- 5-second food diagnosis (3 questions)
+- Top1 recommendation logic
+- Optional exploration slider
+
+Priority:
+P0 stability > P1 UX > P2 optimization
+
+The AI must prioritize shipping working features over architectural perfection.

@@ -1,0 +1,33 @@
+---
+alwaysApply: true
+---
+
+---
+description: Hackathon development behavior rules
+alwaysApply: true
+---
+
+# Hackathon Mode
+
+Primary Objective:
+Ship P1 implementation during hackathon period.
+
+Rules:
+
+- Working implementation > perfect architecture
+- Avoid overengineering
+- Prefer simple solutions
+- Implement MVP first, refactor later
+
+When unsure:
+Choose the fastest working approach.
+
+Do NOT introduce:
+- complex abstractions
+- premature optimization
+- unnecessary libraries
+
+Focus:
+Speed
+Clarity
+Demo readiness
