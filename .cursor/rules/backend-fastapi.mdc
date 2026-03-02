@@ -1,0 +1,36 @@
+---
+alwaysApply: true
+---
+
+---
+description: FastAPI backend architecture and API rules
+globs: backend/**/*.py
+---
+
+# Backend Rules
+
+Stack:
+- FastAPI
+- PostgreSQL
+- Firebase Auth verification
+
+Architecture:
+
+routes/
+services/
+repositories/
+schemas/
+
+Rules:
+
+- Business logic must live in services.
+- Routes must remain thin.
+- Database access only via repository layer.
+
+API Principles:
+- Response must be deterministic.
+- Always return typed schema responses.
+- Validate inputs using Pydantic.
+
+Performance:
+- Prefer simple queries over premature optimization.

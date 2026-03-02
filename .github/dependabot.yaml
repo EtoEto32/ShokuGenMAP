@@ -1,0 +1,50 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "./frontend/"
+    schedule:
+      timezone: "Asia/Tokyo"
+      interval: "daily"
+      time: "00:00"
+    open-pull-requests-limit: 10000
+    commit-message:
+      prefix: "chore(deps): "
+    labels:
+      - "dependencies"
+    target-branch: "main"
+  - package-ecosystem: "docker-compose"
+    directory: "./docker-compose.yml"
+    schedule:
+      timezone: "Asia/Tokyo"
+      interval: "daily"
+      time: "00:00"
+    open-pull-requests-limit: 10000
+    commit-message:
+      prefix: "chore(deps): "
+    labels:
+      - "dependencies"
+    target-branch: "main"
+  - package-ecosystem: "docker"
+    directory: "./frontend/Dockerfile"
+    schedule:
+      timezone: "Asia/Tokyo"
+      interval: "daily"
+      time: "00:00"
+    open-pull-requests-limit: 10000
+    commit-message:
+      prefix: "chore(deps): "
+    labels:
+      - "dependencies"
+    target-branch: "main"
+  - package-ecosystem: "docker"
+    directory: "./backend/Dockerfile"
+    schedule:
+      timezone: "Asia/Tokyo"
+      interval: "daily"
+      time: "00:00"
+    open-pull-requests-limit: 10000
+    commit-message:
+      prefix: "chore(deps): "
+    labels:
+      - "dependencies"
+    target-branch: "main"

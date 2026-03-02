@@ -1,0 +1,29 @@
+---
+alwaysApply: true
+---
+
+---
+description: Database schema and data consistency rules
+---
+
+# Database Rules
+
+Database: PostgreSQL
+
+Guidelines:
+
+- Never duplicate shop data.
+- Google place_id is the external unique identifier.
+- Use timestamps on all tables.
+- Prefer additive migrations.
+
+Scoring Logic:
+
+Recommendation score combines:
+- distance
+- rating
+- review_count
+- genre match
+- diagnosis answers
+
+AI must not redesign schema unless explicitly requested.

@@ -1,0 +1,39 @@
+---
+alwaysApply: true
+---
+
+---
+description: React frontend rules for UI and interaction
+globs: src/**/*.tsx
+---
+
+# Frontend Rules
+
+Stack:
+- React + TypeScript
+- Tailwind CSS
+- React Hook Form
+- Zod validation
+
+Rules:
+
+- Use functional components only.
+- Use TypeScript strict typing.
+- Never use `any`.
+- UI must be mobile-first.
+- Components must be small and composable.
+
+UX Principles:
+- Interaction must feel instant.
+- Avoid loading screens when possible.
+- Prefer optimistic UI updates.
+
+Animation:
+- Lightweight animations only.
+- Must not block interaction.
+
+State:
+- Local state first.
+- Avoid global state unless necessary.
+
+Map interaction must update results immediately.
