@@ -38,6 +38,7 @@ services:
       - POSTGRES_PASSWORD=shokugen
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U shokugen -d shokugen"]
       interval: 5s
