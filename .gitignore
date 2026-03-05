@@ -1,0 +1,19 @@
+# Root ignore
+.env
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Python / backend
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.venv/
+
+# Docker
+docker-data/

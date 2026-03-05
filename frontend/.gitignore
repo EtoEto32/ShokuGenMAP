@@ -1,0 +1,12 @@
+# Node / Vite frontend
+node_modules/
+dist/
+
+# Env
+.env
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
