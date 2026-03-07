@@ -21,8 +21,10 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./secrets:/secrets:ro
     environment:
       - DATABASE_URL=postgresql://shokugen:shokugen@db:5432/shokugen
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase-service-account.json
     depends_on:
       db:
         condition: service_healthy

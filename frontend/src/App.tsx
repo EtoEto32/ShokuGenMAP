@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { auth } from "./firebase";
 import {
   createUserWithEmailAndPassword,
@@ -9,6 +9,7 @@ import {
 } from "firebase/auth";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -17,11 +18,86 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [currentPosition, setCurrentPosition] = useState<{ lat: number; lng: number } | null>(null);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!GOOGLE_MAPS_API_KEY) {
+      setMapError("Google Maps APIキーが設定されていません（VITE_GOOGLE_MAPS_API_KEY）。");
+      return;
+    }
+
+    const initMap = () => {
+      if (!navigator.geolocation) {
+        setMapError("このブラウザは位置情報取得に対応していません。");
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const center = {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          };
+          setCurrentPosition(center);
+
+          const g = (window as any).google;
+          if (!g?.maps || !mapContainerRef.current) {
+            setMapError("Google Maps の初期化に失敗しました。");
+            return;
+          }
+
+          const map = new g.maps.Map(mapContainerRef.current, {
+            center,
+            zoom: 15,
+          });
+
+          // 現在地ピン
+          new g.maps.Marker({
+            position: center,
+            map,
+            title: "現在地",
+          });
+        },
+        (err) => {
+          console.error(err);
+          setMapError("現在地を取得できませんでした。位置情報の許可を確認してください。");
+        },
+      );
+    };
+
+    const existingScript = document.getElementById("google-maps-script") as HTMLScriptElement | null;
+    if ((window as any).google?.maps) {
+      initMap();
+      return;
+    }
+
+    if (existingScript) {
+      existingScript.addEventListener("load", initMap);
+      return () => existingScript.removeEventListener("load", initMap);
+    }
+
+    const script = document.createElement("script");
+    script.id = "google-maps-script";
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places`;
+    script.async = true;
+    script.onload = initMap;
+    script.onerror = () => {
+      setMapError("Google Maps の読み込みに失敗しました。");
+    };
+    document.head.appendChild(script);
+
+    return () => {
+      script.onload = null;
+    };
   }, []);
 
   const handleSignUp = async () => {
@@ -120,6 +196,30 @@ export default function App() {
             )}
           </div>
         </div>
+      </section>
+
+      <section style={{ marginTop: "2rem" }}>
+        <h2>Google Maps（現在地）</h2>
+        {mapError && (
+          <p style={{ color: "red", marginTop: "0.5rem" }}>
+            エラー: {mapError}
+          </p>
+        )}
+        {currentPosition && (
+          <p style={{ marginTop: "0.5rem" }}>
+            現在地: lat {currentPosition.lat.toFixed(5)}, lng {currentPosition.lng.toFixed(5)}
+          </p>
+        )}
+        <div
+          ref={mapContainerRef}
+          style={{
+            marginTop: "0.75rem",
+            width: "100%",
+            height: "320px",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+          }}
+        />
       </section>
 
       <section style={{ marginTop: "2rem" }}>
