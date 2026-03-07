@@ -13,6 +13,7 @@ Stack:
 - FastAPI
 - PostgreSQL
 - Firebase Auth verification
+- Railway deployment (containerized FastAPI + managed PostgreSQL)
 
 Architecture:
 

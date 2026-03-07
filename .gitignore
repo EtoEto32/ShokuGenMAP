@@ -17,3 +17,6 @@ backend/.venv/
 
 # Docker
 docker-data/
+
+# Secrets (Firebase service account etc.)
+secrets/
