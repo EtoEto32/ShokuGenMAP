@@ -49,6 +49,17 @@ export default function App() {
           };
           setCurrentPosition(center);
 
+          // バックエンドへ現在地を送信（POST /location/coords）
+          fetch(`${API_BASE_URL}/location/coords`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(center),
+          }).catch((err) => {
+            console.error("座標送信に失敗しました", err);
+          });
+
           const g = (window as any).google;
           if (!g?.maps || !mapContainerRef.current) {
             setMapError("Google Maps の初期化に失敗しました。");
