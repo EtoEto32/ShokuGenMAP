@@ -1,12 +1,14 @@
 import logging
 import os
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import verify_bearer_token
+from app.routers.diagnosis import router as diagnosis_router
 from app.routers.location import router as location_router
+from app.routers.shops import router as shops_router
 from app.routers.users import router as users_router
 
 app = FastAPI(title="ShokuGenMAP API")
@@ -66,6 +68,8 @@ async def firebase_auth_middleware(request: Request, call_next):
 
 app.include_router(users_router)
 app.include_router(location_router)
+app.include_router(shops_router)
+app.include_router(diagnosis_router)
 
 
 @app.get("/health")

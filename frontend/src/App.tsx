@@ -7,9 +7,44 @@ import {
   signOut,
   User,
 } from "firebase/auth";
+import { DiagnosisProvider } from "./diagnosis/DiagnosisContext";
+import { FiveSecondDiagnosis } from "./diagnosis/FiveSecondDiagnosis";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+const GENRE_OPTIONS = ["", "ご飯物", "ラーメン", "うどん", "そば"];
+
+type Shop = {
+  id: number;
+  place_id: string;
+  name: string;
+  address: string | null;
+  lat: number;
+  lng: number;
+  is_chain: boolean;
+  rating: number | null;
+  primary_genre?: string | null;
+};
+
+const GENRE_EMOJI: Record<string, string> = {
+  ご飯物: "🍚",
+  ラーメン: "🍜",
+  うどん: "🍲",
+  そば: "🥢",
+};
+
+function genreEmoji(genre?: string | null): string {
+  if (!genre) return "🍽️";
+  return GENRE_EMOJI[genre] ?? "🍽️";
+}
+
+function emojiMarkerIconDataUrl(emoji: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+  <circle cx="22" cy="22" r="20" fill="white" stroke="#333" stroke-width="2" />
+  <text x="22" y="28" font-size="20" text-anchor="middle">${emoji}</text>
+</svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -19,8 +54,17 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<any | null>(null);
+  const currentMarkerRef = useRef<any | null>(null);
+  const shopMarkersRef = useRef<any[]>([]);
+
   const [mapError, setMapError] = useState<string | null>(null);
   const [currentPosition, setCurrentPosition] = useState<{ lat: number; lng: number } | null>(null);
+  const [selectedGenre, setSelectedGenre] = useState("");
+  const [excludeChain, setExcludeChain] = useState(false);
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [shopsLoading, setShopsLoading] = useState(false);
+  const [shopsError, setShopsError] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -66,15 +110,15 @@ export default function App() {
             return;
           }
 
-          const map = new g.maps.Map(mapContainerRef.current, {
+          mapRef.current = new g.maps.Map(mapContainerRef.current, {
             center,
             zoom: 15,
           });
 
           // 現在地ピン
-          new g.maps.Marker({
+          currentMarkerRef.current = new g.maps.Marker({
             position: center,
-            map,
+            map: mapRef.current,
             title: "現在地",
           });
         },
@@ -111,11 +155,85 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!currentPosition) {
+      return;
+    }
+
+    const params = new URLSearchParams({
+      lat: String(currentPosition.lat),
+      lng: String(currentPosition.lng),
+      exclude_chain: String(excludeChain),
+    });
+    if (selectedGenre) {
+      params.set("genre", selectedGenre);
+    }
+
+    setShopsLoading(true);
+    setShopsError(null);
+
+    fetch(`${API_BASE_URL}/shops/nearby?${params.toString()}`)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        setShops((data.shops as Shop[]) ?? []);
+      })
+      .catch((err) => {
+        console.error(err);
+        setShopsError("店舗取得に失敗しました。API設定・キーを確認してください。");
+      })
+      .finally(() => {
+        setShopsLoading(false);
+      });
+  }, [currentPosition, selectedGenre, excludeChain]);
+
+  useEffect(() => {
+    const g = (window as any).google;
+    if (!g?.maps || !mapRef.current) {
+      return;
+    }
+
+    if (currentPosition && currentMarkerRef.current) {
+      currentMarkerRef.current.setPosition(currentPosition);
+      mapRef.current.setCenter(currentPosition);
+    }
+
+    for (const marker of shopMarkersRef.current) {
+      marker.setMap(null);
+    }
+    shopMarkersRef.current = [];
+
+    for (const shop of shops) {
+      const emoji = genreEmoji(shop.primary_genre || selectedGenre || undefined);
+      const marker = new g.maps.Marker({
+        position: { lat: shop.lat, lng: shop.lng },
+        map: mapRef.current,
+        title: shop.name,
+        icon: {
+          url: emojiMarkerIconDataUrl(emoji),
+          scaledSize: new g.maps.Size(36, 36),
+          anchor: new g.maps.Point(18, 18),
+        },
+      });
+      shopMarkersRef.current.push(marker);
+    }
+  }, [shops, currentPosition, selectedGenre]);
+
   const handleSignUp = async () => {
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail.includes("@")) {
+      setAuthError("メールアドレスの形式が正しくありません。");
+      return;
+    }
+
     setAuthError(null);
     setIsSubmitting(true);
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
+      await createUserWithEmailAndPassword(auth, normalizedEmail, password);
       setEmail("");
       setPassword("");
     } catch (e: any) {
@@ -126,10 +244,16 @@ export default function App() {
   };
 
   const handleSignIn = async () => {
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail.includes("@")) {
+      setAuthError("メールアドレスの形式が正しくありません。");
+      return;
+    }
+
     setAuthError(null);
     setIsSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, normalizedEmail, password);
       setPassword("");
     } catch (e: any) {
       setAuthError(e.message ?? "ログインに失敗しました");
@@ -147,8 +271,43 @@ export default function App() {
     }
   };
 
+  const handleRunDiagnosis = async (input: {
+    mood_genre: string;
+    time_level: string;
+    volume_level: string;
+  }) => {
+    if (!currentPosition) {
+      throw new Error("現在地を取得してから診断を実行してください");
+    }
+    if (!currentUser) {
+      throw new Error("ログインしてから診断を実行してください");
+    }
+
+    const idToken = await currentUser.getIdToken();
+
+    const res = await fetch(`${API_BASE_URL}/diagnosis/run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        ...input,
+        lat: currentPosition.lat,
+        lng: currentPosition.lng,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`診断API呼び出しに失敗しました (HTTP ${res.status})`);
+    }
+
+    return res.json();
+  };
+
   return (
-    <main style={{ fontFamily: "sans-serif", margin: "2rem auto", maxWidth: 640 }}>
+    <DiagnosisProvider>
+      <main style={{ fontFamily: "sans-serif", margin: "2rem auto", maxWidth: 640 }}>
       <h1>ShokuGenMAP</h1>
 
       <section style={{ marginTop: "1.5rem" }}>
@@ -211,6 +370,30 @@ export default function App() {
 
       <section style={{ marginTop: "2rem" }}>
         <h2>Google Maps（現在地）</h2>
+        <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+          <label>
+            ジャンル
+            <select
+              value={selectedGenre}
+              onChange={(e) => setSelectedGenre(e.target.value)}
+              style={{ marginLeft: "0.5rem" }}
+            >
+              {GENRE_OPTIONS.map((g) => (
+                <option key={g || "all"} value={g}>
+                  {g || "指定なし"}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={excludeChain}
+              onChange={(e) => setExcludeChain(e.target.checked)}
+            />
+            チェーン店を除外
+          </label>
+        </div>
         {mapError && (
           <p style={{ color: "red", marginTop: "0.5rem" }}>
             エラー: {mapError}
@@ -219,6 +402,14 @@ export default function App() {
         {currentPosition && (
           <p style={{ marginTop: "0.5rem" }}>
             現在地: lat {currentPosition.lat.toFixed(5)}, lng {currentPosition.lng.toFixed(5)}
+          </p>
+        )}
+        <p style={{ marginTop: "0.5rem" }}>
+          店舗件数: {shops.length} {shopsLoading ? "(読み込み中...)" : ""}
+        </p>
+        {shopsError && (
+          <p style={{ color: "red", marginTop: "0.5rem" }}>
+            エラー: {shopsError}
           </p>
         )}
         <div
@@ -234,14 +425,11 @@ export default function App() {
       </section>
 
       <section style={{ marginTop: "2rem" }}>
-        <h2>バックエンド疎通</h2>
-        <p>
-          API Base URL: <code>{API_BASE_URL}</code>
-        </p>
-        <p>
-          バックエンド疎通確認: <a href={`${API_BASE_URL}/health`}>{API_BASE_URL}/health</a>
-        </p>
+        <h2>5秒飯診断</h2>
+        <FiveSecondDiagnosis fetchDiagnosis={handleRunDiagnosis} />
       </section>
-    </main>
+
+      </main>
+    </DiagnosisProvider>
   );
 }
