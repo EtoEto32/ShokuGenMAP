@@ -22,6 +22,8 @@ services:
     volumes:
       - ./backend:/app
       - ./secrets:/secrets:ro
+    env_file:
+      - ./backend/.env
     environment:
       - DATABASE_URL=postgresql://shokugen:shokugen@db:5432/shokugen
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase-service-account.json

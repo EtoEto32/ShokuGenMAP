@@ -34,3 +34,13 @@ CREATE TABLE IF NOT EXISTS diagnosis_logs (
     recommended_shop_id BIGINT      REFERENCES shops(id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- shops キャッシュ参照を高速化するためのインデックス
+CREATE INDEX IF NOT EXISTS idx_shops_last_fetched_at
+    ON shops (last_fetched_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_shops_lat_lng
+    ON shops (lat, lng);
+
+CREATE INDEX IF NOT EXISTS idx_shops_genre_chain_last_fetched
+    ON shops (primary_genre, is_chain, last_fetched_at DESC);
