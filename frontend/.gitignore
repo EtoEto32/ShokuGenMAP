@@ -10,3 +10,4 @@ dist/
 Thumbs.db
 .vscode/
 .idea/
+.pnpm-store/
