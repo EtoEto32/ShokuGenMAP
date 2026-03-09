@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # 依存関係定義のみ先にコピーしてインストール
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml ./
 
 # pnpm を有効化して依存関係をインストール
 RUN corepack enable && corepack prepare pnpm@latest --activate && pnpm install
