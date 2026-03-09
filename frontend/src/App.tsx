@@ -7,6 +7,7 @@ import {
   signOut,
   User,
 } from "firebase/auth";
+import { Link } from "react-router-dom";
 import { DiagnosisProvider } from "./diagnosis/DiagnosisContext";
 import { FiveSecondDiagnosis } from "./diagnosis/FiveSecondDiagnosis";
 
@@ -46,6 +47,21 @@ function emojiMarkerIconDataUrl(emoji: string): string {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+function buildGoogleMapsRouteUrl(
+  destination: { lat: number; lng: number },
+  origin?: { lat: number; lng: number } | null,
+): string {
+  const params = new URLSearchParams({
+    api: "1",
+    destination: `${destination.lat},${destination.lng}`,
+    travelmode: "walking",
+  });
+  if (origin) {
+    params.set("origin", `${origin.lat},${origin.lng}`);
+  }
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
@@ -63,6 +79,7 @@ export default function App() {
   const [selectedGenre, setSelectedGenre] = useState("");
   const [excludeChain, setExcludeChain] = useState(false);
   const [shops, setShops] = useState<Shop[]>([]);
+  const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
   const [shopsLoading, setShopsLoading] = useState(false);
   const [shopsError, setShopsError] = useState<string | null>(null);
 
@@ -171,6 +188,7 @@ export default function App() {
 
     setShopsLoading(true);
     setShopsError(null);
+    setSelectedShop(null);
 
     fetch(`${API_BASE_URL}/shops/nearby?${params.toString()}`)
       .then(async (res) => {
@@ -219,9 +237,21 @@ export default function App() {
           anchor: new g.maps.Point(18, 18),
         },
       });
+      marker.addListener("click", () => {
+        setSelectedShop(shop);
+      });
       shopMarkersRef.current.push(marker);
     }
   }, [shops, currentPosition, selectedGenre]);
+
+  const handleStartRouteToSelectedShop = () => {
+    if (!selectedShop) return;
+    const routeUrl = buildGoogleMapsRouteUrl(
+      { lat: selectedShop.lat, lng: selectedShop.lng },
+      currentPosition,
+    );
+    window.open(routeUrl, "_blank", "noopener,noreferrer");
+  };
 
   const handleSignUp = async () => {
     const normalizedEmail = email.trim();
@@ -309,6 +339,11 @@ export default function App() {
     <DiagnosisProvider>
       <main style={{ fontFamily: "sans-serif", margin: "2rem auto", maxWidth: 640 }}>
       <h1>ShokuGenMAP</h1>
+      <p style={{ marginTop: "0.25rem" }}>
+        <Link to="/contact">お問い合わせ</Link>
+        {" / "}
+        <Link to="/profile">プロフィール</Link>
+      </p>
 
       <section style={{ marginTop: "1.5rem" }}>
         <h2>認証（Firebase Auth）</h2>
@@ -422,6 +457,29 @@ export default function App() {
             borderRadius: "8px",
           }}
         />
+        {selectedShop && (
+          <div
+            style={{
+              marginTop: "0.75rem",
+              border: "1px solid #ddd",
+              borderRadius: "8px",
+              padding: "0.75rem",
+              background: "#fff",
+            }}
+          >
+            <strong>{selectedShop.name}</strong>
+            <p style={{ margin: "0.4rem 0 0" }}>
+              住所: {selectedShop.address || "不明"}
+            </p>
+            <p style={{ margin: "0.4rem 0 0" }}>
+              評価: {selectedShop.rating ?? "不明"}
+            </p>
+            <div style={{ marginTop: "0.6rem", display: "flex", gap: "0.5rem" }}>
+              <button onClick={handleStartRouteToSelectedShop}>ここに行く</button>
+              <button onClick={() => setSelectedShop(null)}>閉じる</button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section style={{ marginTop: "2rem" }}>
