@@ -10,6 +10,8 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_BASE_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
+      - CHOKIDAR_INTERVAL=300
     depends_on:
       - backend
 
@@ -27,6 +29,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://shokugen:shokugen@db:5432/shokugen
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase-service-account.json
+      - WATCHFILES_FORCE_POLLING=true
+      - WATCHFILES_POLL_DELAY_MS=300
     depends_on:
       db:
         condition: service_healthy

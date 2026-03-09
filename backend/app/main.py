@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import verify_bearer_token
+from app.routers.contact import router as contact_router
 from app.routers.diagnosis import router as diagnosis_router
 from app.routers.location import router as location_router
 from app.routers.shops import router as shops_router
@@ -70,6 +71,7 @@ app.include_router(users_router)
 app.include_router(location_router)
 app.include_router(shops_router)
 app.include_router(diagnosis_router)
+app.include_router(contact_router)
 
 
 @app.get("/health")
