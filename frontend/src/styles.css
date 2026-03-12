@@ -507,16 +507,71 @@ textarea {
   color: inherit;
 }
 
-.route-debug {
-  margin: 0.45rem 0;
-  border: 1px dashed #f59e0b;
-  background: #fffaf0;
-  color: #7c2d12;
-  border-radius: 8px;
-  padding: 0.45rem 0.55rem;
-  font-size: 0.75rem;
-  line-height: 1.35;
-  word-break: break-word;
+.shop-detail-page {
+  min-height: 100vh;
+  background: #eceef1;
+}
+
+.shop-detail-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.shop-detail-card {
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
+}
+
+.shop-detail-actions {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.shop-detail-stats {
+  margin: 0.9rem 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+}
+
+.shop-detail-stats > div {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 0.5rem 0.6rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+}
+
+.shop-detail-stats strong {
+  color: #374151;
+}
+
+.shop-detail-stats span {
+  color: #111827;
+  font-weight: 700;
+}
+
+.shop-type-chips {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.shop-type-chips span {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78rem;
+  color: #374151;
 }
 
 .route-badge {

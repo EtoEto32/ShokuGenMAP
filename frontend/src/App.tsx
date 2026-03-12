@@ -5,6 +5,7 @@ import {
   Routes,
   useLocation,
   useNavigate,
+  useParams,
   useSearchParams,
 } from "react-router-dom";
 import { auth } from "./firebase";
@@ -32,6 +33,10 @@ type Shop = {
   is_chain: boolean;
   rating: number | null;
   primary_genre?: string | null;
+  google_types?: string[];
+  review_count?: number | null;
+  price_level?: number | null;
+  updated_at?: string;
 };
 
 type DiagnosisInput = {
@@ -557,7 +562,6 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
           <button type="button" className="primary-btn wide" onClick={() => navigate("/diagnosis")}>
             今日の気分を診断する
           </button>
-          <input className="search-box" placeholder="場所や料理名で検索" />
           <button type="button" className="primary-btn wide floating-nearby">
             現在地の周辺で探す
           </button>
@@ -579,7 +583,7 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
             </button>
             <div className="shop-actions">
               <button type="button">お気に入り</button>
-              <button type="button" onClick={() => navigate("/diagnosis/result", { state: { shop: selectedShop } })}>
+              <button type="button" onClick={() => navigate(`/shops/${selectedShop.id}`, { state: { shop: selectedShop } })}>
                 詳細を見る
               </button>
             </div>
@@ -590,16 +594,9 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
       </div>
 
       <div className="top-icons">
-        {currentUser && <button type="button" title="履歴">↺</button>}
-        {currentUser && <button type="button" title="通知">🔔</button>}
-        <button type="button" title="検索">🔍</button>
+        <button type="button" title="リロード" onClick={() => window.location.reload()}>↺</button>
         <button type="button" title="問い合わせ" onClick={() => navigate("/contact")}>✉️</button>
-        <button type="button" title="マイページ" onClick={() => navigate("/mypage")}>👤</button>
-        {currentUser ? (
-          <button type="button" className="mypage-pill" onClick={() => navigate("/mypage")}>マイページ</button>
-        ) : (
-          <button type="button" className="mypage-pill" onClick={() => navigate("/login")}>ログイン</button>
-        )}
+        <button type="button" className="mypage-pill" onClick={() => navigate("/mypage")}>マイページ</button>
       </div>
     </main>
   );
@@ -785,6 +782,109 @@ function DiagnosisResultPage() {
   );
 }
 
+function ShopDetailPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { shopId } = useParams();
+  const [copied, setCopied] = useState(false);
+
+  const stateShop = (location.state as { shop?: Shop } | null)?.shop;
+  const normalizedShop = {
+    ...DEFAULT_SHOP,
+    ...(stateShop as Partial<Shop> | undefined),
+  };
+  const shop: Shop = {
+    ...normalizedShop,
+    id: Number(normalizedShop.id ?? shopId ?? DEFAULT_SHOP.id),
+    lat: Number(normalizedShop.lat ?? DEFAULT_SHOP.lat),
+    lng: Number(normalizedShop.lng ?? DEFAULT_SHOP.lng),
+    place_id: String(normalizedShop.place_id ?? DEFAULT_SHOP.place_id),
+    name: String(normalizedShop.name ?? DEFAULT_SHOP.name),
+    address: normalizedShop.address ?? DEFAULT_SHOP.address,
+    is_chain: Boolean(normalizedShop.is_chain ?? DEFAULT_SHOP.is_chain),
+    rating: normalizedShop.rating ?? DEFAULT_SHOP.rating,
+    primary_genre: normalizedShop.primary_genre ?? DEFAULT_SHOP.primary_genre,
+    google_types: normalizedShop.google_types ?? [],
+    review_count: normalizedShop.review_count ?? null,
+    price_level: normalizedShop.price_level ?? null,
+    updated_at: normalizedShop.updated_at,
+  };
+  const priceText =
+    shop.price_level == null ? "不明" : "¥".repeat(Math.max(1, Math.min(4, Number(shop.price_level))));
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        `${shop.name}\n${shop.address ?? ""}\nhttps://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${shop.lat},${shop.lng}`)}`,
+      );
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <main className="shop-detail-page">
+      <header className="result-header">
+        <button type="button" className="ghost-btn" onClick={() => navigate(-1)}>← 戻る</button>
+        <span><span className="logo-mark">🍽️</span> 店舗詳細</span>
+      </header>
+      <section className="shop-detail-container">
+        <article className="shop-detail-card">
+          <div className="shop-cover">🍜</div>
+          <div className="result-card-body">
+            <p className="shop-meta">
+              {shop.primary_genre ?? "ジャンル未設定"} / 店舗ID: {shop.id}
+            </p>
+            <h2>{shop.name}</h2>
+            <p className="muted">{shop.address ?? "住所情報なし"}</p>
+            <div className="shop-detail-stats">
+              <div><strong>評価</strong><span>{shop.rating ?? "-"}</span></div>
+              <div><strong>レビュー数</strong><span>{shop.review_count ?? "-"}</span></div>
+              <div><strong>価格帯</strong><span>{priceText}</span></div>
+              <div><strong>チェーン判定</strong><span>{shop.is_chain ? "チェーン店" : "個店"}</span></div>
+            </div>
+            <p className="muted">
+              座標: {shop.lat.toFixed(6)}, {shop.lng.toFixed(6)}
+            </p>
+            <p className="muted">place_id: {shop.place_id}</p>
+            {!!shop.google_types?.length && (
+              <div className="shop-type-chips">
+                {shop.google_types.slice(0, 8).map((type) => (
+                  <span key={type}>{type}</span>
+                ))}
+              </div>
+            )}
+            <div className="shop-detail-actions">
+              <button
+                type="button"
+                className="primary-btn wide"
+                onClick={() => navigate(`/route?shopId=${shop.id}`, { state: { shop } })}
+              >
+                ルート案内
+              </button>
+              <a
+                className="ghost-btn route-open-link"
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                  `${shop.lat},${shop.lng}`,
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Googleマップで見る
+              </a>
+              <button type="button" className="ghost-btn" onClick={handleCopy}>
+                {copied ? "コピーしました" : "店舗情報をコピー"}
+              </button>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+  );
+}
+
 function RoutePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -806,7 +906,6 @@ function RoutePage() {
     }
     return "WALKING";
   });
-  const [routeDebugText, setRouteDebugText] = useState<string>("");
 
   const stateShop = (location.state as { shop?: Shop } | null)?.shop;
   const normalizedShop = {
@@ -927,9 +1026,6 @@ function RoutePage() {
       if (primary.status === "OK" && primary.result?.routes?.[0]?.legs?.[0]) {
         setRouteLoading(false);
         applyRouteResult(primary.result);
-        setRouteDebugText(
-          `selected=${travelModeLabel(travelMode)} / origin=${currentPosition.lat.toFixed(6)},${currentPosition.lng.toFixed(6)} / destination=${shop.lat.toFixed(6)},${shop.lng.toFixed(6)} / place_id=${shop.place_id || "-"} / success=${travelModeLabel(primary.mode)}(${primary.destinationKind})`,
-        );
         return;
       }
 
@@ -951,9 +1047,6 @@ function RoutePage() {
             setRouteNotice(
               `${travelModeLabel(travelMode)}では経路が見つからなかったため、${travelModeLabel(mode)}ルートを表示しています。`,
             );
-            setRouteDebugText(
-              `selected=${travelModeLabel(travelMode)} / origin=${currentPosition.lat.toFixed(6)},${currentPosition.lng.toFixed(6)} / destination=${shop.lat.toFixed(6)},${shop.lng.toFixed(6)} / place_id=${shop.place_id || "-"} / success=${travelModeLabel(result.mode)}(${result.destinationKind})`,
-            );
             return;
           }
         }
@@ -964,9 +1057,6 @@ function RoutePage() {
         .map((a) => `${travelModeLabel(a.mode)}(${a.destinationKind}):${a.status}`)
         .join(" / ");
       setRouteError(`ルートの取得に失敗しました。試行結果 → ${attemptSummary}`);
-      setRouteDebugText(
-        `selected=${travelModeLabel(travelMode)} / origin=${currentPosition.lat.toFixed(6)},${currentPosition.lng.toFixed(6)} / destination=${shop.lat.toFixed(6)},${shop.lng.toFixed(6)} / place_id=${shop.place_id || "-"} / attempts=${attemptSummary}`,
-      );
     };
 
     void run();
@@ -1027,9 +1117,6 @@ function RoutePage() {
         {routeLoading && <p className="muted">最適なルートを計算中...</p>}
         {routeNotice && <p className="muted">{routeNotice}</p>}
         {routeError && <p className="error-text">{routeError}</p>}
-        {import.meta.env.DEV && routeDebugText && (
-          <div className="route-debug">{routeDebugText}</div>
-        )}
         {routeSummary && (
           <p className="muted">
             距離: {routeSummary.distanceText} / 所要時間: {routeSummary.durationText}
@@ -1200,6 +1287,7 @@ export default function App() {
       <Route path="/signup/success" element={<SignupSuccessPage />} />
       <Route path="/diagnosis" element={<DiagnosisPage currentUser={currentUser} />} />
       <Route path="/diagnosis/result" element={<DiagnosisResultPage />} />
+      <Route path="/shops/:shopId" element={<ShopDetailPage />} />
       <Route path="/route" element={<RoutePage />} />
       <Route path="/contact" element={<ContactPage />} />
       <Route path="/mypage" element={<MyPage currentUser={currentUser} />} />
