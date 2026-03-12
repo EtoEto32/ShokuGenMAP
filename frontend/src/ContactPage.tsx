@@ -26,6 +26,11 @@ const SUBJECT_OPTIONS = [
   "機能改善の要望",
   "その他",
 ];
+const DEFAULT_API_BASE_URL =
+  typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL;
 
 export default function ContactPage() {
   const [name, setName] = useState("");
@@ -33,8 +38,9 @@ export default function ContactPage() {
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     if (!name.trim() || !email.trim() || !subject.trim() || !message.trim()) {
@@ -42,12 +48,42 @@ export default function ContactPage() {
       return;
     }
 
-    // 今は保存API未接続のため、送信完了メッセージのみ表示
-    setDoneMessage("お問い合わせを受け付けました。ありがとうございます。");
-    setName("");
-    setEmail("");
-    setSubject("");
-    setMessage("");
+    setIsSubmitting(true);
+    setDoneMessage(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/contact/send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          subject: subject.trim(),
+          message: message.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => null);
+        const detail =
+          errorBody && typeof errorBody.detail === "string"
+            ? errorBody.detail
+            : `HTTP ${res.status}`;
+        throw new Error(detail);
+      }
+
+      setDoneMessage("お問い合わせを受け付けました。ありがとうございます。");
+      setName("");
+      setEmail("");
+      setSubject("");
+      setMessage("");
+    } catch (err) {
+      console.error(err);
+      const detail = err instanceof Error ? err.message : "不明なエラー";
+      setDoneMessage(`送信に失敗しました。(${detail})`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -61,6 +97,7 @@ export default function ContactPage() {
           "radial-gradient(circle at 20% 20%, rgba(186,230,253,0.45), transparent 50%), radial-gradient(circle at 80% 25%, rgba(187,247,208,0.35), transparent 45%), linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)",
       }}
     >
+      <title>お問い合わせ | 食ジャンMAP</title>
       <Box sx={{ maxWidth: 980, mx: "auto" }}>
         <Button
           component={Link}
@@ -198,6 +235,7 @@ export default function ContactPage() {
                 fullWidth
                 variant="contained"
                 startIcon={<SendRoundedIcon />}
+                disabled={isSubmitting}
                 sx={{
                   mt: 3,
                   py: 1.3,
@@ -206,7 +244,7 @@ export default function ContactPage() {
                   background: "linear-gradient(90deg, #fb923c 0%, #f97316 100%)",
                 }}
               >
-                送信する
+                {isSubmitting ? "送信中..." : "送信する"}
               </Button>
             </Box>
 
