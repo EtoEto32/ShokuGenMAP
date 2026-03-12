@@ -35,6 +35,14 @@ CREATE TABLE IF NOT EXISTS diagnosis_logs (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS favorites (
+    id          BIGSERIAL   PRIMARY KEY,
+    user_id     BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shop_id     BIGINT      NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, shop_id)
+);
+
 -- shops キャッシュ参照を高速化するためのインデックス
 CREATE INDEX IF NOT EXISTS idx_shops_last_fetched_at
     ON shops (last_fetched_at DESC);
@@ -44,3 +52,6 @@ CREATE INDEX IF NOT EXISTS idx_shops_lat_lng
 
 CREATE INDEX IF NOT EXISTS idx_shops_genre_chain_last_fetched
     ON shops (primary_genre, is_chain, last_fetched_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_favorites_user_created_at
+    ON favorites (user_id, created_at DESC);

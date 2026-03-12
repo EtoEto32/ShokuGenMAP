@@ -225,6 +225,10 @@ textarea {
   margin-top: 0.8rem;
 }
 
+.nearby-mode-btn.active {
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+}
+
 .top-icons {
   position: absolute;
   top: 1rem;
@@ -682,6 +686,31 @@ textarea {
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   padding: 1rem;
+}
+
+.mypage-favorites-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.mypage-favorite-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.mypage-favorite-item strong {
+  font-size: 0.9rem;
+}
+
+.mypage-favorite-item span {
+  color: #6b7280;
+  font-size: 0.8rem;
 }
 
 @media (max-width: 900px) {

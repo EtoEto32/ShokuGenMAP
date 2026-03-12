@@ -164,6 +164,18 @@ function toGoogleTravelMode(mode: TravelModeKey): "walking" | "driving" | "bicyc
   return "walking";
 }
 
+function formatPriceLevel(priceLevel: number | null | undefined): string {
+  if (priceLevel == null || !Number.isFinite(Number(priceLevel))) {
+    return "価格情報なし";
+  }
+  const level = Math.max(0, Math.min(4, Number(priceLevel)));
+  if (level <= 0) return "~¥1,000";
+  if (level === 1) return "¥1,000〜¥2,000";
+  if (level === 2) return "¥2,000〜¥4,000";
+  if (level === 3) return "¥4,000〜¥8,000";
+  return "¥8,000〜";
+}
+
 function isValidLatLng(value: { lat: number; lng: number } | null | undefined): value is { lat: number; lng: number } {
   if (!value) return false;
   return (
@@ -205,6 +217,48 @@ async function fetchCurrentUserProfile(user: User): Promise<BackendUser> {
     throw new Error(`ユーザー情報取得に失敗しました (HTTP ${res.status})`);
   }
   return res.json();
+}
+
+async function fetchFavoriteShops(user: User): Promise<Shop[]> {
+  const token = await user.getIdToken();
+  const res = await fetch(`${API_BASE_URL}/favorites`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`お気に入り取得に失敗しました (HTTP ${res.status})`);
+  }
+  const data = await res.json();
+  return (data.shops as Shop[]) ?? [];
+}
+
+async function saveFavoriteShop(user: User, shopId: number): Promise<void> {
+  const token = await user.getIdToken();
+  const res = await fetch(`${API_BASE_URL}/favorites`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ shop_id: shopId }),
+  });
+  if (!res.ok) {
+    throw new Error(`お気に入り保存に失敗しました (HTTP ${res.status})`);
+  }
+}
+
+async function deleteFavoriteShop(user: User, shopId: number): Promise<void> {
+  const token = await user.getIdToken();
+  const res = await fetch(`${API_BASE_URL}/favorites/${shopId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`お気に入り削除に失敗しました (HTTP ${res.status})`);
+  }
 }
 
 async function getCurrentLocation(): Promise<{ lat: number; lng: number }> {
@@ -439,26 +493,68 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
   const shopMarkersRef = useRef<any[]>([]);
   const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedGenre, setSelectedGenre] = useState("ラーメン");
+  const [nearbyMode, setNearbyMode] = useState(false);
   const [shops, setShops] = useState<Shop[]>([]);
   const [selectedShop, setSelectedShop] = useState<Shop>(DEFAULT_SHOP);
   const [excludeChain, setExcludeChain] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [shopsLoading, setShopsLoading] = useState(false);
   const [profileName, setProfileName] = useState<string>("");
+  const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
+  const [favoritePending, setFavoritePending] = useState(false);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentUser) {
       setProfileName("");
+      setFavoriteIds(new Set());
       return;
     }
-    fetchCurrentUserProfile(currentUser)
-      .then((profile) => {
+    Promise.all([fetchCurrentUserProfile(currentUser), fetchFavoriteShops(currentUser)])
+      .then(([profile, favorites]) => {
         setProfileName(profile.name || "");
+        setFavoriteIds(new Set(favorites.map((s) => s.id)));
       })
       .catch(() => {
         setProfileName("");
+        setFavoriteIds(new Set());
       });
   }, [currentUser]);
+
+  const toggleFavorite = async (shop: Shop) => {
+    setFavoriteError(null);
+    if (!currentUser) {
+      navigate("/login");
+      return;
+    }
+    if (!shop.id || shop.id < 1) {
+      setFavoriteError("この店舗はまだ保存できません。");
+      return;
+    }
+    setFavoritePending(true);
+    try {
+      const isFavorite = favoriteIds.has(shop.id);
+      if (isFavorite) {
+        await deleteFavoriteShop(currentUser, shop.id);
+      } else {
+        await saveFavoriteShop(currentUser, shop.id);
+      }
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (isFavorite) {
+          next.delete(shop.id);
+        } else {
+          next.add(shop.id);
+        }
+        return next;
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "お気に入りの更新に失敗しました。";
+      setFavoriteError(message);
+    } finally {
+      setFavoritePending(false);
+    }
+  };
 
   const handleMapReady = useCallback(async (map: any) => {
     mapRef.current = map;
@@ -493,9 +589,11 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
     const params = new URLSearchParams({
       lat: String(position.lat),
       lng: String(position.lng),
-      genre: selectedGenre,
       exclude_chain: String(excludeChain),
     });
+    if (!nearbyMode && selectedGenre) {
+      params.set("genre", selectedGenre);
+    }
     setShopsLoading(true);
     fetch(`${API_BASE_URL}/shops/nearby?${params.toString()}`)
       .then(async (res) => {
@@ -511,7 +609,7 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
         setShops([]);
       })
       .finally(() => setShopsLoading(false));
-  }, [position, selectedGenre, excludeChain]);
+  }, [position, selectedGenre, excludeChain, nearbyMode]);
 
   useEffect(() => {
     const g = (window as any).google;
@@ -549,7 +647,10 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
                 key={genre}
                 type="button"
                 className={`genre-chip ${selectedGenre === genre ? "active" : ""}`}
-                onClick={() => setSelectedGenre(genre)}
+                onClick={() => {
+                  setSelectedGenre(genre);
+                  setNearbyMode(false);
+                }}
               >
                 {genre}
               </button>
@@ -562,9 +663,26 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
           <button type="button" className="primary-btn wide" onClick={() => navigate("/diagnosis")}>
             今日の気分を診断する
           </button>
-          <button type="button" className="primary-btn wide floating-nearby">
-            現在地の周辺で探す
+          <button
+            type="button"
+            className={`primary-btn wide floating-nearby nearby-mode-btn ${nearbyMode ? "active" : ""}`}
+            onClick={() => {
+              setNearbyMode((prev) => {
+                const next = !prev;
+                if (next) {
+                  setSelectedGenre("");
+                  if (mapRef.current && position) {
+                    mapRef.current.setCenter(position);
+                    mapRef.current.setZoom(16);
+                  }
+                }
+                return next;
+              });
+            }}
+          >
+            {nearbyMode ? "周辺モード中（解除）" : "現在地の周辺で探す"}
           </button>
+          {nearbyMode && <p className="muted">周辺モード: ジャンル指定なしで近くの店舗を表示中</p>}
         </aside>
 
         <section className="shop-card">
@@ -582,12 +700,15 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
               ルート案内
             </button>
             <div className="shop-actions">
-              <button type="button">お気に入り</button>
+              <button type="button" onClick={() => toggleFavorite(selectedShop)} disabled={favoritePending}>
+                {favoriteIds.has(selectedShop.id) ? "お気に入り解除" : "お気に入り"}
+              </button>
               <button type="button" onClick={() => navigate(`/shops/${selectedShop.id}`, { state: { shop: selectedShop } })}>
                 詳細を見る
               </button>
             </div>
             {mapError && <p className="error-text">{mapError}</p>}
+            {favoriteError && <p className="error-text">{favoriteError}</p>}
             {shopsLoading && <p className="muted">店舗を読み込み中です...</p>}
           </div>
         </section>
@@ -729,11 +850,14 @@ function DiagnosisPage({ currentUser }: { currentUser: User | null }) {
   );
 }
 
-function DiagnosisResultPage() {
+function DiagnosisResultPage({ currentUser }: { currentUser: User | null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const result = (location.state as { result?: DiagnosisResult; shop?: Shop } | null)?.result;
   const stateShop = (location.state as { result?: DiagnosisResult; shop?: Shop } | null)?.shop;
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [favoritePending, setFavoritePending] = useState(false);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
 
   const shop = {
     id: result?.recommended_shop?.id ?? stateShop?.id ?? DEFAULT_SHOP.id,
@@ -746,6 +870,42 @@ function DiagnosisResultPage() {
     is_chain: result?.recommended_shop?.is_chain ?? stateShop?.is_chain ?? DEFAULT_SHOP.is_chain,
     primary_genre:
       result?.recommended_shop?.primary_genre ?? stateShop?.primary_genre ?? DEFAULT_SHOP.primary_genre,
+  };
+
+  useEffect(() => {
+    if (!currentUser || !shop.id || shop.id < 1) {
+      setIsFavorite(false);
+      return;
+    }
+    fetchFavoriteShops(currentUser)
+      .then((shops) => setIsFavorite(shops.some((s) => s.id === shop.id)))
+      .catch(() => setIsFavorite(false));
+  }, [currentUser, shop.id]);
+
+  const handleToggleFavorite = async () => {
+    setFavoriteError(null);
+    if (!currentUser) {
+      navigate("/login");
+      return;
+    }
+    if (!shop.id || shop.id < 1) {
+      setFavoriteError("この店舗はまだ保存できません。");
+      return;
+    }
+    setFavoritePending(true);
+    try {
+      if (isFavorite) {
+        await deleteFavoriteShop(currentUser, shop.id);
+        setIsFavorite(false);
+      } else {
+        await saveFavoriteShop(currentUser, shop.id);
+        setIsFavorite(true);
+      }
+    } catch {
+      setFavoriteError("お気に入りの更新に失敗しました。ログイン状態を確認してください。");
+    } finally {
+      setFavoritePending(false);
+    }
   };
 
   return (
@@ -772,9 +932,12 @@ function DiagnosisResultPage() {
               ルート案内を開始
             </button>
             <div className="shop-actions">
-              <button type="button">保存</button>
+              <button type="button" onClick={handleToggleFavorite} disabled={favoritePending}>
+                {isFavorite ? "保存解除" : "保存"}
+              </button>
               <button type="button" onClick={() => navigate("/diagnosis")}>もう一度診断</button>
             </div>
+            {favoriteError && <p className="error-text">{favoriteError}</p>}
           </div>
         </article>
       </section>
@@ -782,11 +945,14 @@ function DiagnosisResultPage() {
   );
 }
 
-function ShopDetailPage() {
+function ShopDetailPage({ currentUser }: { currentUser: User | null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { shopId } = useParams();
   const [copied, setCopied] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [favoritePending, setFavoritePending] = useState(false);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
 
   const stateShop = (location.state as { shop?: Shop } | null)?.shop;
   const normalizedShop = {
@@ -809,8 +975,7 @@ function ShopDetailPage() {
     price_level: normalizedShop.price_level ?? null,
     updated_at: normalizedShop.updated_at,
   };
-  const priceText =
-    shop.price_level == null ? "不明" : "¥".repeat(Math.max(1, Math.min(4, Number(shop.price_level))));
+  const priceText = formatPriceLevel(shop.price_level);
 
   const handleCopy = async () => {
     try {
@@ -821,6 +986,44 @@ function ShopDetailPage() {
       setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser) {
+      setIsFavorite(false);
+      return;
+    }
+    fetchFavoriteShops(currentUser)
+      .then((shops) => {
+        setIsFavorite(shops.some((s) => s.id === shop.id));
+      })
+      .catch(() => setIsFavorite(false));
+  }, [currentUser, shop.id]);
+
+  const handleToggleFavorite = async () => {
+    setFavoriteError(null);
+    if (!currentUser) {
+      navigate("/login");
+      return;
+    }
+    if (!shop.id || shop.id < 1) {
+      setFavoriteError("この店舗はまだ保存できません。");
+      return;
+    }
+    setFavoritePending(true);
+    try {
+      if (isFavorite) {
+        await deleteFavoriteShop(currentUser, shop.id);
+        setIsFavorite(false);
+      } else {
+        await saveFavoriteShop(currentUser, shop.id);
+        setIsFavorite(true);
+      }
+    } catch {
+      setFavoriteError("お気に入りの更新に失敗しました。ログイン状態を確認してください。");
+    } finally {
+      setFavoritePending(false);
     }
   };
 
@@ -845,10 +1048,6 @@ function ShopDetailPage() {
               <div><strong>価格帯</strong><span>{priceText}</span></div>
               <div><strong>チェーン判定</strong><span>{shop.is_chain ? "チェーン店" : "個店"}</span></div>
             </div>
-            <p className="muted">
-              座標: {shop.lat.toFixed(6)}, {shop.lng.toFixed(6)}
-            </p>
-            <p className="muted">place_id: {shop.place_id}</p>
             {!!shop.google_types?.length && (
               <div className="shop-type-chips">
                 {shop.google_types.slice(0, 8).map((type) => (
@@ -864,6 +1063,10 @@ function ShopDetailPage() {
               >
                 ルート案内
               </button>
+              <button type="button" className="ghost-btn" onClick={handleToggleFavorite} disabled={favoritePending}>
+                {isFavorite ? "お気に入り解除" : "お気に入り登録"}
+              </button>
+              {favoriteError && <p className="error-text">{favoriteError}</p>}
               <a
                 className="ghost-btn route-open-link"
                 href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
@@ -1232,18 +1435,23 @@ function ContactPage() {
 function MyPage({ currentUser }: { currentUser: User | null }) {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<BackendUser | null>(null);
+  const [favorites, setFavorites] = useState<Shop[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentUser) {
       setProfile(null);
+      setFavorites([]);
       return;
     }
     setLoading(true);
     setError(null);
-    fetchCurrentUserProfile(currentUser)
-      .then((data) => setProfile(data))
+    Promise.all([fetchCurrentUserProfile(currentUser), fetchFavoriteShops(currentUser)])
+      .then(([profileData, favoriteShops]) => {
+        setProfile(profileData);
+        setFavorites(favoriteShops);
+      })
       .catch((e: any) => setError(e?.message ?? "プロフィール取得に失敗しました。"))
       .finally(() => setLoading(false));
   }, [currentUser]);
@@ -1269,7 +1477,26 @@ function MyPage({ currentUser }: { currentUser: User | null }) {
         </div>
       </section>
       <section className="mypage-grid">
-        <article><h3>お気に入り一覧</h3><p>保存した店舗を確認する</p></article>
+        <article>
+          <h3>お気に入り一覧</h3>
+          {favorites.length === 0 ? (
+            <p>保存した店舗はまだありません</p>
+          ) : (
+            <div className="mypage-favorites-list">
+              {favorites.slice(0, 8).map((shop) => (
+                <button
+                  key={shop.id}
+                  type="button"
+                  className="mypage-favorite-item"
+                  onClick={() => navigate(`/shops/${shop.id}`, { state: { shop } })}
+                >
+                  <strong>{shop.name}</strong>
+                  <span>{shop.address ?? "住所情報なし"}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </article>
         <article><h3>マイレポート一覧</h3><p>過去の診断・訪問履歴</p></article>
       </section>
     </main>
@@ -1286,8 +1513,8 @@ export default function App() {
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/signup/success" element={<SignupSuccessPage />} />
       <Route path="/diagnosis" element={<DiagnosisPage currentUser={currentUser} />} />
-      <Route path="/diagnosis/result" element={<DiagnosisResultPage />} />
-      <Route path="/shops/:shopId" element={<ShopDetailPage />} />
+      <Route path="/diagnosis/result" element={<DiagnosisResultPage currentUser={currentUser} />} />
+      <Route path="/shops/:shopId" element={<ShopDetailPage currentUser={currentUser} />} />
       <Route path="/route" element={<RoutePage />} />
       <Route path="/contact" element={<ContactPage />} />
       <Route path="/mypage" element={<MyPage currentUser={currentUser} />} />
