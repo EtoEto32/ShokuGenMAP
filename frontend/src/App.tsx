@@ -19,6 +19,8 @@ import {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const GENRES = ["ご飯物", "ラーメン", "うどん", "そば"];
+const NONOICHI_CENTER = { lat: 36.5316, lng: 136.6232 }; // 石川県野々市市 扇が丘付近
+const MAX_DISTANCE_FROM_NONOICHI_KM = 250;
 
 type Shop = {
   id: number;
@@ -40,16 +42,42 @@ type DiagnosisInput = {
 
 type DiagnosisResult = {
   recommended_shop?: {
+    id?: number;
     place_id?: string;
     name?: string;
     address?: string | null;
     rating?: number | null;
     lat?: number;
     lng?: number;
+    is_chain?: boolean;
+    primary_genre?: string | null;
   };
   distance_km?: number;
   score?: number;
 };
+
+type BackendUser = {
+  id: number;
+  firebase_uid: string;
+  name: string;
+  like_categories: string[];
+};
+
+type RouteSummary = {
+  distanceText: string;
+  durationText: string;
+  steps: string[];
+};
+
+type TravelModeKey = "WALKING" | "DRIVING" | "BICYCLING" | "TRANSIT";
+
+const TRAVEL_MODE_OPTIONS: Array<{ key: TravelModeKey; label: string }> = [
+  { key: "WALKING", label: "徒歩" },
+  { key: "DRIVING", label: "車" },
+  { key: "BICYCLING", label: "自転車" },
+  { key: "TRANSIT", label: "公共交通" },
+];
+const TRAVEL_MODE_STORAGE_KEY = "shokugen:route:travelMode";
 
 const DEFAULT_SHOP: Shop = {
   id: 0,
@@ -83,17 +111,109 @@ function emojiMarkerIconDataUrl(emoji: string): string {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const x =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const y = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  return earthRadiusKm * y;
+}
+
+function shouldUseNonoichiFallback(candidate: { lat: number; lng: number }): boolean {
+  if (import.meta.env.VITE_FORCE_NONOICHI === "true") {
+    return true;
+  }
+  const isLocalHost = ["localhost", "127.0.0.1", "0.0.0.0"].includes(window.location.hostname);
+  if (!isLocalHost) {
+    return false;
+  }
+  return distanceKm(candidate, NONOICHI_CENTER) > MAX_DISTANCE_FROM_NONOICHI_KM;
+}
+
+function normalizeCurrentPosition(candidate: { lat: number; lng: number }): { lat: number; lng: number } {
+  if (shouldUseNonoichiFallback(candidate)) {
+    console.warn("現在地が大きくずれていたため、野々市（扇が丘）座標を使用します。", candidate);
+    return NONOICHI_CENTER;
+  }
+  return candidate;
+}
+
+function stripHtmlTags(value: string): string {
+  const parser = document.createElement("div");
+  parser.innerHTML = value;
+  return (parser.textContent || parser.innerText || "").trim();
+}
+
+function travelModeLabel(mode: TravelModeKey): string {
+  return TRAVEL_MODE_OPTIONS.find((v) => v.key === mode)?.label ?? "徒歩";
+}
+
+function toGoogleTravelMode(mode: TravelModeKey): "walking" | "driving" | "bicycling" | "transit" {
+  if (mode === "DRIVING") return "driving";
+  if (mode === "BICYCLING") return "bicycling";
+  if (mode === "TRANSIT") return "transit";
+  return "walking";
+}
+
+function isValidLatLng(value: { lat: number; lng: number } | null | undefined): value is { lat: number; lng: number } {
+  if (!value) return false;
+  return (
+    Number.isFinite(value.lat) &&
+    Number.isFinite(value.lng) &&
+    value.lat >= -90 &&
+    value.lat <= 90 &&
+    value.lng >= -180 &&
+    value.lng <= 180
+  );
+}
+
+function isTravelModeKey(value: string): value is TravelModeKey {
+  return TRAVEL_MODE_OPTIONS.some((option) => option.key === value);
+}
+
+async function upsertCurrentUser(user: User): Promise<BackendUser> {
+  const token = await user.getIdToken();
+  const res = await fetch(`${API_BASE_URL}/users/me`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`ユーザー同期に失敗しました (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
+async function fetchCurrentUserProfile(user: User): Promise<BackendUser> {
+  const token = await user.getIdToken();
+  const res = await fetch(`${API_BASE_URL}/users/me`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`ユーザー情報取得に失敗しました (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
 async function getCurrentLocation(): Promise<{ lat: number; lng: number }> {
   if (!navigator.geolocation) {
-    throw new Error("このブラウザは位置情報取得に対応していません。");
+    return NONOICHI_CENTER;
   }
 
   return new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const detected = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        resolve(normalizeCurrentPosition(detected));
       },
-      () => reject(new Error("現在地を取得できませんでした。")),
+      () => resolve(NONOICHI_CENTER),
       { enableHighAccuracy: true, timeout: 12000 },
     );
   });
@@ -193,7 +313,8 @@ function SignupPage() {
     }
     setIsSubmitting(true);
     try {
-      await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      await upsertCurrentUser(cred.user);
       setName("");
       setEmail("");
       setPassword("");
@@ -253,7 +374,8 @@ function LoginPage() {
     setError(null);
     setIsSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+      await upsertCurrentUser(cred.user);
       navigate("/");
     } catch (e: any) {
       setError(e.message ?? "ログインに失敗しました。");
@@ -317,6 +439,21 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
   const [excludeChain, setExcludeChain] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [shopsLoading, setShopsLoading] = useState(false);
+  const [profileName, setProfileName] = useState<string>("");
+
+  useEffect(() => {
+    if (!currentUser) {
+      setProfileName("");
+      return;
+    }
+    fetchCurrentUserProfile(currentUser)
+      .then((profile) => {
+        setProfileName(profile.name || "");
+      })
+      .catch(() => {
+        setProfileName("");
+      });
+  }, [currentUser]);
 
   const handleMapReady = useCallback(async (map: any) => {
     mapRef.current = map;
@@ -396,34 +533,61 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
   return (
     <main className="map-layout">
       <div ref={mapContainerRef} className="map-canvas" />
-      <aside className="left-panel">
-        <div className="brand-line"><span className="logo-mark">🍽️</span> 食ジャンMAP</div>
-        <h2>こんにちは、{currentUser?.email?.split("@")[0] ?? "ユーザー"}さん！</h2>
-        <p className="muted">今日の気分にぴったりの一皿を提案します。</p>
-        <div className="genre-grid">
-          {GENRES.map((genre) => (
+      <div className="left-stack">
+        <aside className="left-panel">
+          <div className="brand-line"><span className="logo-mark">🍽️</span> 食ジャンMAP</div>
+          <h2>こんにちは、{profileName || currentUser?.email?.split("@")[0] || "ユーザー"}さん！</h2>
+          <p className="muted">今日の気分にぴったりの一皿を提案します。</p>
+          <div className="genre-grid">
+            {GENRES.map((genre) => (
+              <button
+                key={genre}
+                type="button"
+                className={`genre-chip ${selectedGenre === genre ? "active" : ""}`}
+                onClick={() => setSelectedGenre(genre)}
+              >
+                {genre}
+              </button>
+            ))}
+          </div>
+          <label className="checkbox-line">
+            <input type="checkbox" checked={excludeChain} onChange={(e) => setExcludeChain(e.target.checked)} />
+            全国チェーンを除外
+          </label>
+          <button type="button" className="primary-btn wide" onClick={() => navigate("/diagnosis")}>
+            今日の気分を診断する
+          </button>
+          <input className="search-box" placeholder="場所や料理名で検索" />
+          <button type="button" className="primary-btn wide floating-nearby">
+            現在地の周辺で探す
+          </button>
+        </aside>
+
+        <section className="shop-card">
+          <div className="shop-cover">🍜</div>
+          <div className="shop-content">
+            <p className="shop-meta">{selectedShop.primary_genre ?? selectedGenre} / 500m以内</p>
+            <h3>{selectedShop.name}</h3>
+            <p className="muted">{selectedShop.address ?? "住所情報なし"}</p>
+            <p className="muted">評価: {selectedShop.rating ?? "-"} / 営業中: 22:00まで</p>
             <button
-              key={genre}
               type="button"
-              className={`genre-chip ${selectedGenre === genre ? "active" : ""}`}
-              onClick={() => setSelectedGenre(genre)}
+              className="primary-btn wide"
+              onClick={() => navigate(`/route?shopId=${selectedShop.id}`, { state: { shop: selectedShop } })}
             >
-              {genre}
+              ルート案内
             </button>
-          ))}
-        </div>
-        <label className="checkbox-line">
-          <input type="checkbox" checked={excludeChain} onChange={(e) => setExcludeChain(e.target.checked)} />
-          全国チェーンを除外
-        </label>
-        <button type="button" className="primary-btn wide" onClick={() => navigate("/diagnosis")}>
-          今日の気分を診断する
-        </button>
-        <input className="search-box" placeholder="場所や料理名で検索" />
-        <button type="button" className="primary-btn wide floating-nearby">
-          現在地の周辺で探す
-        </button>
-      </aside>
+            <div className="shop-actions">
+              <button type="button">お気に入り</button>
+              <button type="button" onClick={() => navigate("/diagnosis/result", { state: { shop: selectedShop } })}>
+                詳細を見る
+              </button>
+            </div>
+            {mapError && <p className="error-text">{mapError}</p>}
+            {shopsLoading && <p className="muted">店舗を読み込み中です...</p>}
+          </div>
+        </section>
+      </div>
 
       <div className="top-icons">
         {currentUser && <button type="button" title="履歴">↺</button>}
@@ -437,31 +601,6 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
           <button type="button" className="mypage-pill" onClick={() => navigate("/login")}>ログイン</button>
         )}
       </div>
-
-      <section className="shop-card">
-        <div className="shop-cover">🍜</div>
-        <div className="shop-content">
-          <p className="shop-meta">{selectedShop.primary_genre ?? selectedGenre} / 500m以内</p>
-          <h3>{selectedShop.name}</h3>
-          <p className="muted">{selectedShop.address ?? "住所情報なし"}</p>
-          <p className="muted">評価: {selectedShop.rating ?? "-"} / 営業中: 22:00まで</p>
-          <button
-            type="button"
-            className="primary-btn wide"
-            onClick={() => navigate(`/route?shopId=${selectedShop.id}`, { state: { shop: selectedShop } })}
-          >
-            ルート案内
-          </button>
-          <div className="shop-actions">
-            <button type="button">お気に入り</button>
-            <button type="button" onClick={() => navigate("/diagnosis/result", { state: { shop: selectedShop } })}>
-              詳細を見る
-            </button>
-          </div>
-          {mapError && <p className="error-text">{mapError}</p>}
-          {shopsLoading && <p className="muted">店舗を読み込み中です...</p>}
-        </div>
-      </section>
     </main>
   );
 }
@@ -600,11 +739,16 @@ function DiagnosisResultPage() {
   const stateShop = (location.state as { result?: DiagnosisResult; shop?: Shop } | null)?.shop;
 
   const shop = {
+    id: result?.recommended_shop?.id ?? stateShop?.id ?? DEFAULT_SHOP.id,
+    place_id: result?.recommended_shop?.place_id ?? stateShop?.place_id ?? DEFAULT_SHOP.place_id,
     name: result?.recommended_shop?.name ?? stateShop?.name ?? DEFAULT_SHOP.name,
     address: result?.recommended_shop?.address ?? stateShop?.address ?? DEFAULT_SHOP.address,
     rating: result?.recommended_shop?.rating ?? stateShop?.rating ?? DEFAULT_SHOP.rating,
     lat: result?.recommended_shop?.lat ?? stateShop?.lat ?? DEFAULT_SHOP.lat,
     lng: result?.recommended_shop?.lng ?? stateShop?.lng ?? DEFAULT_SHOP.lng,
+    is_chain: result?.recommended_shop?.is_chain ?? stateShop?.is_chain ?? DEFAULT_SHOP.is_chain,
+    primary_genre:
+      result?.recommended_shop?.primary_genre ?? stateShop?.primary_genre ?? DEFAULT_SHOP.primary_genre,
   };
 
   return (
@@ -618,20 +762,22 @@ function DiagnosisResultPage() {
         </div>
         <article className="result-card">
           <div className="shop-cover">🍜</div>
-          <h3>{shop.name}</h3>
-          <p className="muted">評価 {shop.rating ?? "-"} / 徒歩約{Math.max(5, Math.round((result?.distance_km ?? 0.8) * 10))}分</p>
-          <p className="muted">{shop.address}</p>
-          <p className="muted">スコア: {result?.score?.toFixed(2) ?? "N/A"}</p>
-          <button
-            type="button"
-            className="primary-btn wide"
-            onClick={() => navigate("/route", { state: { shop } })}
-          >
-            ルート案内を開始
-          </button>
-          <div className="shop-actions">
-            <button type="button">保存</button>
-            <button type="button" onClick={() => navigate("/diagnosis")}>もう一度診断</button>
+          <div className="result-card-body">
+            <h3>{shop.name}</h3>
+            <p className="muted">評価 {shop.rating ?? "-"} / 徒歩約{Math.max(5, Math.round((result?.distance_km ?? 0.8) * 10))}分</p>
+            <p className="muted">{shop.address}</p>
+            <p className="muted">スコア: {result?.score?.toFixed(2) ?? "N/A"}</p>
+            <button
+              type="button"
+              className="primary-btn wide"
+              onClick={() => navigate("/route", { state: { shop } })}
+            >
+              ルート案内を開始
+            </button>
+            <div className="shop-actions">
+              <button type="button">保存</button>
+              <button type="button" onClick={() => navigate("/diagnosis")}>もう一度診断</button>
+            </div>
           </div>
         </article>
       </section>
@@ -644,49 +790,219 @@ function RoutePage() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const [arrived, setArrived] = useState(false);
+  const watchIdRef = useRef<number | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any | null>(null);
-  const routeLineRef = useRef<any | null>(null);
+  const directionsRendererRef = useRef<any | null>(null);
+  const [currentPosition, setCurrentPosition] = useState<{ lat: number; lng: number } | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [routeNotice, setRouteNotice] = useState<string | null>(null);
+  const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null);
+  const [travelMode, setTravelMode] = useState<TravelModeKey>(() => {
+    const saved = localStorage.getItem(TRAVEL_MODE_STORAGE_KEY);
+    if (saved && isTravelModeKey(saved)) {
+      return saved;
+    }
+    return "WALKING";
+  });
+  const [routeDebugText, setRouteDebugText] = useState<string>("");
 
   const stateShop = (location.state as { shop?: Shop } | null)?.shop;
-  const shop: Shop = stateShop ?? {
+  const normalizedShop = {
     ...DEFAULT_SHOP,
-    id: Number(searchParams.get("shopId") || DEFAULT_SHOP.id),
+    ...(stateShop as Partial<Shop> | undefined),
   };
+  const shop: Shop = {
+    ...normalizedShop,
+    id: Number(normalizedShop.id ?? searchParams.get("shopId") ?? DEFAULT_SHOP.id),
+    lat: Number(normalizedShop.lat ?? DEFAULT_SHOP.lat),
+    lng: Number(normalizedShop.lng ?? DEFAULT_SHOP.lng),
+    place_id: String(normalizedShop.place_id ?? DEFAULT_SHOP.place_id),
+    name: String(normalizedShop.name ?? DEFAULT_SHOP.name),
+    address: normalizedShop.address ?? DEFAULT_SHOP.address,
+    is_chain: Boolean(normalizedShop.is_chain ?? DEFAULT_SHOP.is_chain),
+    rating: normalizedShop.rating ?? DEFAULT_SHOP.rating,
+    primary_genre: normalizedShop.primary_genre ?? DEFAULT_SHOP.primary_genre,
+  };
+  const ARRIVAL_THRESHOLD_KM = 0.08;
 
   const handleRouteMapReady = useCallback(async (map: any) => {
     mapRef.current = map;
     try {
       const current = await getCurrentLocation();
+      setCurrentPosition(current);
       map.setCenter(current);
-      new (window as any).google.maps.Marker({ position: current, map, title: "現在地" });
-      new (window as any).google.maps.Marker({
-        position: { lat: shop.lat, lng: shop.lng },
-        map,
-        title: shop.name,
-        icon: {
-          url: emojiMarkerIconDataUrl("🍜"),
-          scaledSize: new (window as any).google.maps.Size(36, 36),
-        },
-      });
-      routeLineRef.current = new (window as any).google.maps.Polyline({
-        path: [current, { lat: shop.lat, lng: shop.lng }],
-        geodesic: true,
-        strokeColor: "#2d72ff",
-        strokeOpacity: 1.0,
-        strokeWeight: 4,
-      });
-      routeLineRef.current.setMap(map);
     } catch {
       map.setCenter({ lat: shop.lat, lng: shop.lng });
     }
-  }, [shop.lat, shop.lng, shop.name]);
+  }, [shop.lat, shop.lng]);
 
   useGoogleMap(
     mapContainerRef,
     handleRouteMapReady,
     () => undefined,
   );
+
+  useEffect(() => {
+    const g = (window as any).google;
+    if (!g?.maps || !mapRef.current || !currentPosition) {
+      return;
+    }
+
+    if (!directionsRendererRef.current) {
+      directionsRendererRef.current = new g.maps.DirectionsRenderer({
+        map: mapRef.current,
+        suppressMarkers: false,
+        polylineOptions: {
+          strokeColor: "#2d72ff",
+          strokeOpacity: 0.9,
+          strokeWeight: 5,
+        },
+      });
+    }
+
+    const directionsService = new g.maps.DirectionsService();
+    setRouteLoading(true);
+    setRouteError(null);
+    setRouteNotice(null);
+    setRouteSummary(null);
+
+    const destinationCandidates: Array<{ kind: "place_id" | "latlng" | "query"; value: any }> = [];
+    if (shop.place_id) {
+      destinationCandidates.push({ kind: "place_id", value: { placeId: shop.place_id } });
+    }
+    if (isValidLatLng({ lat: Number(shop.lat), lng: Number(shop.lng) })) {
+      destinationCandidates.push({ kind: "latlng", value: { lat: Number(shop.lat), lng: Number(shop.lng) } });
+    }
+    if (shop.address || shop.name) {
+      destinationCandidates.push({ kind: "query", value: [shop.name, shop.address].filter(Boolean).join(" ") });
+    }
+    if (destinationCandidates.length === 0) {
+      setRouteLoading(false);
+      setRouteError("目的地情報が不正です（座標/住所が不足しています）。");
+      return;
+    }
+
+    const requestRoute = (
+      mode: TravelModeKey,
+      destination: { kind: "place_id" | "latlng" | "query"; value: any },
+    ): Promise<{ result: any; status: string; mode: TravelModeKey; destinationKind: "place_id" | "latlng" | "query" }> => {
+      return new Promise((resolve) => {
+        const request: Record<string, any> = {
+          origin: currentPosition,
+          destination: destination.value,
+          travelMode: g.maps.TravelMode[mode],
+          region: "JP",
+        };
+        if (mode === "TRANSIT") {
+          request.transitOptions = {
+            departureTime: new Date(),
+          };
+        }
+        directionsService.route(request, (result: any, status: string) => {
+          resolve({ result, status, mode, destinationKind: destination.kind });
+        });
+      });
+    };
+
+    const applyRouteResult = (result: any) => {
+      directionsRendererRef.current?.setDirections(result);
+      const leg = result.routes[0].legs[0];
+      const steps = (leg.steps || [])
+        .map((step: any) => stripHtmlTags(step.instructions || ""))
+        .filter((s: string) => s.length > 0);
+      setRouteSummary({
+        distanceText: leg.distance?.text ?? "-",
+        durationText: leg.duration?.text ?? "-",
+        steps,
+      });
+    };
+
+    const run = async () => {
+      let primary = await requestRoute(travelMode, destinationCandidates[0]);
+      for (let i = 1; primary.status !== "OK" && i < destinationCandidates.length; i += 1) {
+        primary = await requestRoute(travelMode, destinationCandidates[i]);
+      }
+      if (primary.status === "OK" && primary.result?.routes?.[0]?.legs?.[0]) {
+        setRouteLoading(false);
+        applyRouteResult(primary.result);
+        setRouteDebugText(
+          `selected=${travelModeLabel(travelMode)} / origin=${currentPosition.lat.toFixed(6)},${currentPosition.lng.toFixed(6)} / destination=${shop.lat.toFixed(6)},${shop.lng.toFixed(6)} / place_id=${shop.place_id || "-"} / success=${travelModeLabel(primary.mode)}(${primary.destinationKind})`,
+        );
+        return;
+      }
+
+      const fallbackOrder: TravelModeKey[] = (["DRIVING", "WALKING", "BICYCLING", "TRANSIT"] as const).filter(
+        (mode): mode is TravelModeKey => mode !== travelMode,
+      );
+      const attempts = [primary];
+
+      if (primary.status === "ZERO_RESULTS") {
+        for (const mode of fallbackOrder) {
+          let result = await requestRoute(mode, destinationCandidates[0]);
+          for (let i = 1; result.status !== "OK" && i < destinationCandidates.length; i += 1) {
+            result = await requestRoute(mode, destinationCandidates[i]);
+          }
+          attempts.push(result);
+          if (result.status === "OK" && result.result?.routes?.[0]?.legs?.[0]) {
+            setRouteLoading(false);
+            applyRouteResult(result.result);
+            setRouteNotice(
+              `${travelModeLabel(travelMode)}では経路が見つからなかったため、${travelModeLabel(mode)}ルートを表示しています。`,
+            );
+            setRouteDebugText(
+              `selected=${travelModeLabel(travelMode)} / origin=${currentPosition.lat.toFixed(6)},${currentPosition.lng.toFixed(6)} / destination=${shop.lat.toFixed(6)},${shop.lng.toFixed(6)} / place_id=${shop.place_id || "-"} / success=${travelModeLabel(result.mode)}(${result.destinationKind})`,
+            );
+            return;
+          }
+        }
+      }
+
+      setRouteLoading(false);
+      const attemptSummary = attempts
+        .map((a) => `${travelModeLabel(a.mode)}(${a.destinationKind}):${a.status}`)
+        .join(" / ");
+      setRouteError(`ルートの取得に失敗しました。試行結果 → ${attemptSummary}`);
+      setRouteDebugText(
+        `selected=${travelModeLabel(travelMode)} / origin=${currentPosition.lat.toFixed(6)},${currentPosition.lng.toFixed(6)} / destination=${shop.lat.toFixed(6)},${shop.lng.toFixed(6)} / place_id=${shop.place_id || "-"} / attempts=${attemptSummary}`,
+      );
+    };
+
+    void run();
+  }, [currentPosition, shop.lat, shop.lng, travelMode]);
+
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      return;
+    }
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const latest = normalizeCurrentPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setCurrentPosition(latest);
+
+        if (!arrived) {
+          const remainKm = distanceKm(latest, { lat: shop.lat, lng: shop.lng });
+          if (remainKm <= ARRIVAL_THRESHOLD_KM) {
+            setArrived(true);
+          }
+        }
+      },
+      () => undefined,
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 },
+    );
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, [arrived, shop.lat, shop.lng]);
+
+  useEffect(() => {
+    localStorage.setItem(TRAVEL_MODE_STORAGE_KEY, travelMode);
+  }, [travelMode]);
 
   return (
     <main className="map-layout">
@@ -695,11 +1011,36 @@ function RoutePage() {
         <div className="brand-line"><span className="logo-mark">🍽️</span> 食ジャンMAP</div>
         <h2>{shop.name}</h2>
         <p className="route-badge">{arrived ? "ここに行った！" : "ルート案内中"}</p>
-        <p className="muted">現在地から目的地まで徒歩ルートを表示中です。</p>
+        <div className="route-mode-grid">
+          {TRAVEL_MODE_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              className={`route-mode-btn ${travelMode === option.key ? "active" : ""}`}
+              onClick={() => setTravelMode(option.key)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <p className="muted">現在地から目的地まで{travelModeLabel(travelMode)}ルートを表示中です。</p>
+        {routeLoading && <p className="muted">最適なルートを計算中...</p>}
+        {routeNotice && <p className="muted">{routeNotice}</p>}
+        {routeError && <p className="error-text">{routeError}</p>}
+        {import.meta.env.DEV && routeDebugText && (
+          <div className="route-debug">{routeDebugText}</div>
+        )}
+        {routeSummary && (
+          <p className="muted">
+            距離: {routeSummary.distanceText} / 所要時間: {routeSummary.durationText}
+          </p>
+        )}
         <div className="route-steps">
-          <p>1. 現在地を出発</p>
-          <p>2. 300m先を右折</p>
-          <p>3. 信号を渡る</p>
+          {(routeSummary?.steps?.length ? routeSummary.steps.slice(0, 6) : ["ルート情報を取得中..."]).map(
+            (step, idx) => (
+              <p key={`${idx}-${step}`}>{idx + 1}. {step}</p>
+            ),
+          )}
         </div>
         {!arrived ? (
           <button type="button" className="success-btn wide" onClick={() => setArrived(true)}>
@@ -709,7 +1050,16 @@ function RoutePage() {
           <p className="arrival-note">到着済みです。お疲れさまでした！</p>
         )}
         <div className="wizard-actions">
-          <button type="button" className="ghost-btn" onClick={() => navigate("/")}>マップで開く</button>
+          <a
+            className="ghost-btn route-open-link"
+            href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
+              `${shop.lat},${shop.lng}`,
+            )}${currentPosition ? `&origin=${encodeURIComponent(`${currentPosition.lat},${currentPosition.lng}`)}` : ""}&travelmode=${toGoogleTravelMode(travelMode)}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            マップで開く
+          </a>
           <button type="button" className="ghost-btn" onClick={() => navigate("/")}>案内を終了</button>
         </div>
       </aside>
@@ -720,10 +1070,47 @@ function RoutePage() {
 function ContactPage() {
   const navigate = useNavigate();
   const [sent, setSent] = useState(false);
+  const [name, setName] = useState("山田太郎");
+  const [email, setEmail] = useState("example@email.com");
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const onSubmit = (e: FormEvent) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setSent(true);
+    setError(null);
+    setSent(false);
+    if (!subject || !message.trim()) {
+      setError("お問い合わせ項目と内容を入力してください。");
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/contact/send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          subject,
+          message: message.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.detail ?? `送信に失敗しました (HTTP ${res.status})`);
+      }
+      setSent(true);
+      setMessage("");
+      setSubject("");
+    } catch (e: any) {
+      setError(e?.message ?? "送信に失敗しました。");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -734,19 +1121,20 @@ function ContactPage() {
         <p>アプリの使い方や不具合、改善案など、開発チームへお気軽にご連絡ください。</p>
         <form onSubmit={onSubmit}>
           <div className="contact-grid">
-            <label>お名前<input defaultValue="山田太郎" /></label>
-            <label>メールアドレス<input type="email" defaultValue="example@email.com" /></label>
+            <label>お名前<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+            <label>メールアドレス<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           </div>
           <label>お問い合わせ項目
-            <select defaultValue="">
+            <select value={subject} onChange={(e) => setSubject(e.target.value)}>
               <option value="" disabled>選択してください</option>
               <option>バグ報告</option>
               <option>機能改善</option>
               <option>その他</option>
             </select>
           </label>
-          <label>お問い合わせ内容<textarea placeholder="詳細な内容をご記入ください..." rows={6} /></label>
-          <button type="submit" className="primary-btn wide">送信する</button>
+          <label>お問い合わせ内容<textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="詳細な内容をご記入ください..." rows={6} /></label>
+          {error && <p className="error-text">{error}</p>}
+          <button type="submit" className="primary-btn wide" disabled={sending}>{sending ? "送信中..." : "送信する"}</button>
           {sent && <p className="success-note">送信ありがとうございました。担当者が確認します。</p>}
         </form>
       </section>
@@ -754,8 +1142,24 @@ function ContactPage() {
   );
 }
 
-function MyPage() {
+function MyPage({ currentUser }: { currentUser: User | null }) {
   const navigate = useNavigate();
+  const [profile, setProfile] = useState<BackendUser | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setProfile(null);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    fetchCurrentUserProfile(currentUser)
+      .then((data) => setProfile(data))
+      .catch((e: any) => setError(e?.message ?? "プロフィール取得に失敗しました。"))
+      .finally(() => setLoading(false));
+  }, [currentUser]);
 
   return (
     <main className="mypage">
@@ -766,13 +1170,15 @@ function MyPage() {
         <button type="button" className="ghost-btn" onClick={() => signOut(auth)}>ログアウト</button>
       </header>
       <section className="mypage-card">
-        <h1>山田 太郎</h1>
-        <p>@misaki_gourmet・食通レベル: 12</p>
+        <h1>{profile?.name ?? "ゲストユーザー"}</h1>
+        <p>@{currentUser?.email?.split("@")[0] ?? "guest"}・食通レベル: 12</p>
+        {!currentUser && <p className="error-text">ログインするとプロフィール情報を取得できます。</p>}
+        {loading && <p className="muted">プロフィールを読み込み中...</p>}
+        {error && <p className="error-text">{error}</p>}
         <div className="tag-row">
-          <span>ラーメン</span>
-          <span>うどん</span>
-          <span>そば</span>
-          <span>ご飯物</span>
+          {(profile?.like_categories?.length ? profile.like_categories : ["ラーメン", "うどん", "そば", "ご飯物"]).map((genre) => (
+            <span key={genre}>{genre}</span>
+          ))}
         </div>
       </section>
       <section className="mypage-grid">
@@ -796,7 +1202,7 @@ export default function App() {
       <Route path="/diagnosis/result" element={<DiagnosisResultPage />} />
       <Route path="/route" element={<RoutePage />} />
       <Route path="/contact" element={<ContactPage />} />
-      <Route path="/mypage" element={<MyPage />} />
+      <Route path="/mypage" element={<MyPage currentUser={currentUser} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

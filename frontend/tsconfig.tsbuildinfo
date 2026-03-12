@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/contactpage.tsx","./src/profilepage.tsx","./src/firebase.ts","./src/main.tsx","./src/theme.ts","./src/vite-env.d.ts","./src/diagnosis/diagnosiscontext.tsx","./src/diagnosis/fiveseconddiagnosis.tsx"],"version":"5.9.3"}
