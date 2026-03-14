@@ -693,6 +693,16 @@ textarea {
   gap: 0.45rem;
 }
 
+.mypage-report-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.mypage-report-list h4 {
+  margin: 0.4rem 0 0.1rem;
+  font-size: 0.92rem;
+}
+
 .mypage-favorite-item {
   border: 1px solid #e5e7eb;
   border-radius: 10px;

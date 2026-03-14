@@ -68,6 +68,38 @@ type BackendUser = {
   like_categories: string[];
 };
 
+type ReportDiagnosisItem = {
+  id: number;
+  mood_genre: string;
+  time_level: string;
+  volume_level: string;
+  created_at: string;
+  recommended_shop: {
+    id: number;
+    place_id: string;
+    name: string;
+    address: string | null;
+    lat: number;
+    lng: number;
+    primary_genre: string | null;
+    rating: number | null;
+  } | null;
+};
+
+type ReportVisitItem = {
+  id: number;
+  source: string;
+  visited_at: string;
+  shop: Shop;
+};
+
+type MyReportResponse = {
+  diagnosis_count: number;
+  visit_count: number;
+  diagnosis_history: ReportDiagnosisItem[];
+  visit_history: ReportVisitItem[];
+};
+
 type RouteSummary = {
   distanceText: string;
   durationText: string;
@@ -258,6 +290,34 @@ async function deleteFavoriteShop(user: User, shopId: number): Promise<void> {
   });
   if (!res.ok) {
     throw new Error(`お気に入り削除に失敗しました (HTTP ${res.status})`);
+  }
+}
+
+async function fetchMyReports(user: User): Promise<MyReportResponse> {
+  const token = await user.getIdToken();
+  const res = await fetch(`${API_BASE_URL}/reports/my`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`マイレポート取得に失敗しました (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
+async function checkinVisitedShop(user: User, shopId: number, source = "route_checkin"): Promise<void> {
+  const token = await user.getIdToken();
+  const res = await fetch(`${API_BASE_URL}/reports/visits/checkin`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ shop_id: shopId, source }),
+  });
+  if (!res.ok) {
+    throw new Error(`訪問履歴の保存に失敗しました (HTTP ${res.status})`);
   }
 }
 
@@ -1088,11 +1148,14 @@ function ShopDetailPage({ currentUser }: { currentUser: User | null }) {
   );
 }
 
-function RoutePage() {
+function RoutePage({ currentUser }: { currentUser: User | null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const [arrived, setArrived] = useState(false);
+  const [checkinSaving, setCheckinSaving] = useState(false);
+  const [checkinError, setCheckinError] = useState<string | null>(null);
+  const [checkinSaved, setCheckinSaved] = useState(false);
   const watchIdRef = useRef<number | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any | null>(null);
@@ -1128,6 +1191,20 @@ function RoutePage() {
     primary_genre: normalizedShop.primary_genre ?? DEFAULT_SHOP.primary_genre,
   };
   const ARRIVAL_THRESHOLD_KM = 0.08;
+
+  const submitCheckin = useCallback(async (source: string) => {
+    if (!currentUser || checkinSaving || checkinSaved || !shop.id) return;
+    setCheckinSaving(true);
+    setCheckinError(null);
+    try {
+      await checkinVisitedShop(currentUser, shop.id, source);
+      setCheckinSaved(true);
+    } catch (e: any) {
+      setCheckinError(e?.message ?? "訪問履歴の保存に失敗しました。");
+    } finally {
+      setCheckinSaving(false);
+    }
+  }, [checkinSaved, checkinSaving, currentUser, shop.id]);
 
   const handleRouteMapReady = useCallback(async (map: any) => {
     mapRef.current = map;
@@ -1297,6 +1374,12 @@ function RoutePage() {
     localStorage.setItem(TRAVEL_MODE_STORAGE_KEY, travelMode);
   }, [travelMode]);
 
+  useEffect(() => {
+    if (arrived) {
+      void submitCheckin("auto_arrival");
+    }
+  }, [arrived, submitCheckin]);
+
   return (
     <main className="map-layout">
       <div ref={mapContainerRef} className="map-canvas" />
@@ -1325,6 +1408,9 @@ function RoutePage() {
             距離: {routeSummary.distanceText} / 所要時間: {routeSummary.durationText}
           </p>
         )}
+        {checkinError && <p className="error-text">{checkinError}</p>}
+        {!currentUser && <p className="muted">ログインすると訪問履歴を保存できます。</p>}
+        {checkinSaved && <p className="success-note">訪問履歴を保存しました。</p>}
         <div className="route-steps">
           {(routeSummary?.steps?.length ? routeSummary.steps.slice(0, 6) : ["ルート情報を取得中..."]).map(
             (step, idx) => (
@@ -1333,7 +1419,15 @@ function RoutePage() {
           )}
         </div>
         {!arrived ? (
-          <button type="button" className="success-btn wide" onClick={() => setArrived(true)}>
+          <button
+            type="button"
+            className="success-btn wide"
+            onClick={() => {
+              setArrived(true);
+              void submitCheckin("manual_checkin");
+            }}
+            disabled={checkinSaving}
+          >
             到着してチェックイン
           </button>
         ) : (
@@ -1436,6 +1530,7 @@ function MyPage({ currentUser }: { currentUser: User | null }) {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<BackendUser | null>(null);
   const [favorites, setFavorites] = useState<Shop[]>([]);
+  const [report, setReport] = useState<MyReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1443,14 +1538,16 @@ function MyPage({ currentUser }: { currentUser: User | null }) {
     if (!currentUser) {
       setProfile(null);
       setFavorites([]);
+      setReport(null);
       return;
     }
     setLoading(true);
     setError(null);
-    Promise.all([fetchCurrentUserProfile(currentUser), fetchFavoriteShops(currentUser)])
-      .then(([profileData, favoriteShops]) => {
+    Promise.all([fetchCurrentUserProfile(currentUser), fetchFavoriteShops(currentUser), fetchMyReports(currentUser)])
+      .then(([profileData, favoriteShops, reportData]) => {
         setProfile(profileData);
         setFavorites(favoriteShops);
+        setReport(reportData);
       })
       .catch((e: any) => setError(e?.message ?? "プロフィール取得に失敗しました。"))
       .finally(() => setLoading(false));
@@ -1497,7 +1594,54 @@ function MyPage({ currentUser }: { currentUser: User | null }) {
             </div>
           )}
         </article>
-        <article><h3>マイレポート一覧</h3><p>過去の診断・訪問履歴</p></article>
+        <article>
+          <h3>マイレポート一覧</h3>
+          <p>過去の診断・訪問履歴</p>
+          {loading && <p className="muted">マイレポートを読み込み中...</p>}
+          {!loading && (
+            <div className="mypage-report-list">
+              <h4>診断履歴 ({report?.diagnosis_count ?? 0})</h4>
+              {report?.diagnosis_history?.length ? (
+                report.diagnosis_history.slice(0, 6).map((item) => (
+                  <button
+                    key={`diag-${item.id}`}
+                    type="button"
+                    className="mypage-favorite-item"
+                    onClick={() => {
+                      if (item.recommended_shop?.id) {
+                        navigate(`/shops/${item.recommended_shop.id}`, { state: { shop: item.recommended_shop } });
+                      }
+                    }}
+                    disabled={!item.recommended_shop?.id}
+                  >
+                    <strong>{item.recommended_shop?.name ?? "店舗情報なし"}</strong>
+                    <span>
+                      {item.mood_genre} / {item.time_level} / {item.volume_level}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <p>診断履歴はまだありません</p>
+              )}
+              <h4>訪問履歴 ({report?.visit_count ?? 0})</h4>
+              {report?.visit_history?.length ? (
+                report.visit_history.slice(0, 6).map((item) => (
+                  <button
+                    key={`visit-${item.id}`}
+                    type="button"
+                    className="mypage-favorite-item"
+                    onClick={() => navigate(`/shops/${item.shop.id}`, { state: { shop: item.shop } })}
+                  >
+                    <strong>{item.shop.name}</strong>
+                    <span>{item.shop.address ?? "住所情報なし"}</span>
+                  </button>
+                ))
+              ) : (
+                <p>訪問履歴はまだありません</p>
+              )}
+            </div>
+          )}
+        </article>
       </section>
     </main>
   );
@@ -1515,7 +1659,7 @@ export default function App() {
       <Route path="/diagnosis" element={<DiagnosisPage currentUser={currentUser} />} />
       <Route path="/diagnosis/result" element={<DiagnosisResultPage currentUser={currentUser} />} />
       <Route path="/shops/:shopId" element={<ShopDetailPage currentUser={currentUser} />} />
-      <Route path="/route" element={<RoutePage />} />
+      <Route path="/route" element={<RoutePage currentUser={currentUser} />} />
       <Route path="/contact" element={<ContactPage />} />
       <Route path="/mypage" element={<MyPage currentUser={currentUser} />} />
       <Route path="*" element={<Navigate to="/" replace />} />

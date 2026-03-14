@@ -35,6 +35,14 @@ CREATE TABLE IF NOT EXISTS diagnosis_logs (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS visit_logs (
+    id          BIGSERIAL   PRIMARY KEY,
+    user_id     BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shop_id     BIGINT      NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    source      VARCHAR(30) NOT NULL DEFAULT 'manual_checkin',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS favorites (
     id          BIGSERIAL   PRIMARY KEY,
     user_id     BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -55,3 +63,6 @@ CREATE INDEX IF NOT EXISTS idx_shops_genre_chain_last_fetched
 
 CREATE INDEX IF NOT EXISTS idx_favorites_user_created_at
     ON favorites (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_visit_logs_user_created_at
+    ON visit_logs (user_id, created_at DESC);

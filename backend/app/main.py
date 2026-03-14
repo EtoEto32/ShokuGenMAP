@@ -10,6 +10,7 @@ from app.routers.favorites import router as favorites_router
 from app.routers.contact import router as contact_router
 from app.routers.diagnosis import router as diagnosis_router
 from app.routers.location import router as location_router
+from app.routers.reports import router as reports_router
 from app.routers.shops import router as shops_router
 from app.routers.users import router as users_router
 
@@ -74,6 +75,7 @@ app.include_router(users_router)
 app.include_router(location_router)
 app.include_router(shops_router)
 app.include_router(diagnosis_router)
+app.include_router(reports_router)
 app.include_router(contact_router)
 app.include_router(favorites_router)
 
