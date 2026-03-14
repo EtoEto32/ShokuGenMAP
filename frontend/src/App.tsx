@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   Navigate,
   Route,
@@ -16,9 +16,11 @@ import {
   signOut,
   User,
 } from "firebase/auth";
+import RamenGamePage from "./ramengame/RamenGamePage";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+const RAMEN_GAME_URL = import.meta.env.VITE_RAMEN_GAME_URL ?? "/ramengame";
 const GENRES = ["ご飯物", "ラーメン", "うどん", "そば"];
 const NONOICHI_CENTER = { lat: 36.5316, lng: 136.6232 }; // 石川県野々市市 扇が丘付近
 const MAX_DISTANCE_FROM_NONOICHI_KM = 250;
@@ -340,11 +342,42 @@ async function getCurrentLocation(): Promise<{ lat: number; lng: number }> {
 
 function observeAuthState() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, setCurrentUser);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setAuthChecked(true);
+    });
     return () => unsubscribe();
   }, []);
-  return currentUser;
+  return { currentUser, authChecked };
+}
+
+function RequireAuth({
+  currentUser,
+  authChecked,
+  children,
+}: {
+  currentUser: User | null;
+  authChecked: boolean;
+  children: ReactNode;
+}) {
+  if (!authChecked) {
+    return (
+      <main className="auth-page">
+        <section className="auth-card">
+          <h1>認証確認中...</h1>
+          <p>ログイン状態を確認しています。</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
 }
 
 function useGoogleMap(
@@ -743,6 +776,36 @@ function MapHomePage({ currentUser }: { currentUser: User | null }) {
             {nearbyMode ? "周辺モード中（解除）" : "現在地の周辺で探す"}
           </button>
           {nearbyMode && <p className="muted">周辺モード: ジャンル指定なしで近くの店舗を表示中</p>}
+          <button
+            type="button"
+            className="primary-btn wide ramen-game-btn"
+            onClick={() => {
+              // #region agent log
+              fetch("http://127.0.0.1:7244/ingest/e11d716f-91b8-4c7a-ae15-400a8605469d", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  runId: "white-screen-investigation",
+                  hypothesisId: "H2",
+                  location: "App.tsx:MapHomePage",
+                  message: "Ramen game button tapped",
+                  data: {
+                    ramenGameUrl: RAMEN_GAME_URL,
+                    isAbsoluteUrl: /^https?:\/\//i.test(RAMEN_GAME_URL),
+                  },
+                  timestamp: Date.now(),
+                }),
+              }).catch(() => {});
+              // #endregion
+              if (/^https?:\/\//i.test(RAMEN_GAME_URL)) {
+                window.location.assign(RAMEN_GAME_URL);
+              } else {
+                navigate(RAMEN_GAME_URL);
+              }
+            }}
+          >
+            待ち時間暇な人！！
+          </button>
         </aside>
 
         <section className="shop-card">
@@ -1648,11 +1711,40 @@ function MyPage({ currentUser }: { currentUser: User | null }) {
 }
 
 export default function App() {
-  const currentUser = observeAuthState();
+  const { currentUser, authChecked } = observeAuthState();
+  const appLocation = useLocation();
+
+  useEffect(() => {
+    // #region agent log
+    fetch("http://127.0.0.1:7244/ingest/e11d716f-91b8-4c7a-ae15-400a8605469d", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: "white-screen-investigation",
+        hypothesisId: "H3",
+        location: "App.tsx:App",
+        message: "App auth and route snapshot",
+        data: {
+          pathname: appLocation.pathname,
+          authChecked,
+          hasCurrentUser: Boolean(currentUser),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+  }, [appLocation.pathname, authChecked, currentUser]);
 
   return (
     <Routes>
-      <Route path="/" element={<MapHomePage currentUser={currentUser} />} />
+      <Route
+        path="/"
+        element={(
+          <RequireAuth currentUser={currentUser} authChecked={authChecked}>
+            <MapHomePage currentUser={currentUser} />
+          </RequireAuth>
+        )}
+      />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/signup/success" element={<SignupSuccessPage />} />
@@ -1661,7 +1753,15 @@ export default function App() {
       <Route path="/shops/:shopId" element={<ShopDetailPage currentUser={currentUser} />} />
       <Route path="/route" element={<RoutePage currentUser={currentUser} />} />
       <Route path="/contact" element={<ContactPage />} />
-      <Route path="/mypage" element={<MyPage currentUser={currentUser} />} />
+      <Route path="/ramengame" element={<RamenGamePage />} />
+      <Route
+        path="/mypage"
+        element={(
+          <RequireAuth currentUser={currentUser} authChecked={authChecked}>
+            <MyPage currentUser={currentUser} />
+          </RequireAuth>
+        )}
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

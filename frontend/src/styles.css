@@ -229,6 +229,65 @@ textarea {
   background: linear-gradient(135deg, #f59e0b, #ef4444);
 }
 
+.ramen-game-btn {
+  margin-top: 0.6rem;
+  background: linear-gradient(135deg, #dc2626, #f59e0b);
+}
+
+.ramen-game-page {
+  min-height: 100vh;
+  background: #f3f4f6;
+  padding: 1rem;
+}
+
+.ramen-game-header {
+  max-width: 950px;
+  margin: 0 auto 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ramen-game-panel {
+  max-width: 950px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.ramen-game-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.ramen-game-stats p {
+  margin: 0;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.35rem 0.7rem;
+}
+
+.ramen-game-canvas {
+  width: min(100%, 360px);
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid #cbd5e1;
+  background: #eef2ff;
+  touch-action: none;
+}
+
+.ramen-game-actions {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: start;
+}
+
 .top-icons {
   position: absolute;
   top: 1rem;
